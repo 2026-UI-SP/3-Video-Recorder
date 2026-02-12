@@ -1,2 +1,2 @@
 # 3-Video-Recorder
-Group members: Simon Novak, Levi Peltomaa
+Group members: Simon Novak, Levi Peltomaa, Josh Kozlowski
