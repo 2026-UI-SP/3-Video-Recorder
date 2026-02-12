@@ -3,5 +3,4 @@ This app provides a web-app for Michael Walker's robotics lab for annotating vid
 
 
 
-
 Group members: Simon Novak, Levi Peltomaa, Josh Kozlowski, Andrew Dzik, Evan Jacobson, Grace Fenech
