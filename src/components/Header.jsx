@@ -35,7 +35,7 @@ function Header() {
     <AppBar position="static" sx={{ bgcolor: 'primary.main' }}>
       <Toolbar sx={{ py: 1.25, px: { xs: 2, sm: 3 } }}>
         <Typography variant="h6" component="span" sx={{ flexGrow: 1, fontWeight: 700, letterSpacing: '-0.02em' }}>
-          Video Recorder
+          Video Annotator
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <Box component="nav" sx={{ display: 'flex', gap: 1 }}>

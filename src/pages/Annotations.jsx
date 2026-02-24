@@ -530,7 +530,7 @@ function Annotations() {
                 {duration > 0 &&
                   annotations.map((a) => {
                     const left = (a.start / duration) * 100
-                    const width = a.type === 'range' ? ((a.end - a.start) / duration) * 100 : 2
+                    const width = a.type === 'range' ? ((a.end - a.start) / duration) * 100 : 1
                     return (
                       <Box
                         key={a.id}
@@ -539,7 +539,7 @@ function Annotations() {
                           left: `${left}%`,
                           top: 0,
                           bottom: 0,
-                          width: `${Math.max(width, 2)}%`,
+                          width: `${Math.max(width, 1)}%`,
                           minWidth: 4,
                           bgcolor: a.labelColor,
                           borderRadius: 0.5,
