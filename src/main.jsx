@@ -43,7 +43,7 @@ if (rootEl) {
   createRoot(rootEl).render(
     <StrictMode>
       <ErrorBoundary>
-        <BrowserRouter>
+        <BrowserRouter basename={import.meta.env.BASE_URL}>
           <ThemeModeProvider>
             <ThemedApp />
           </ThemeModeProvider>
