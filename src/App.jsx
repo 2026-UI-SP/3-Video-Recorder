@@ -4,6 +4,7 @@ import Header from './components/Header'
 import Home from './pages/Home'
 import Annotations from './pages/Annotations'
 import About from './pages/About'
+import Help from './pages/Help'
 import './App.css'
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/annotations" element={<Annotations />} />
           <Route path="/about" element={<About />} />
+          <Route path="/help" element={<Help />} />
         </Routes>
       </Container>
     </>

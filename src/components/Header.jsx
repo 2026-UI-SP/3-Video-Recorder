@@ -4,6 +4,7 @@ import { useThemeMode } from '../context/ThemeModeContext'
 
 const navLinks = [
   { to: '/', label: 'Home' },
+  { to: '/help', label: 'Help' },
   { to: '/about', label: 'About' },
 ]
 
