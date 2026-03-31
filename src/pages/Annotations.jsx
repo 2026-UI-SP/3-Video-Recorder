@@ -37,6 +37,11 @@ const LABEL_COLORS = [
   '#5e35b1', // deep purple
 ]
 
+function parseNonNegativeDurationInput(input) {
+  const raw = String(input).trim()
+  if (raw === '') return 0
+  const n = parseFloat(raw)
+  return Number.isFinite(n) ? Math.max(0, n) : 0
 const keycapSx = {
   px: 0.6,
   py: 0.15,
@@ -70,7 +75,7 @@ function Annotations() {
   const [annotationLabelId, setAnnotationLabelId] = useState('')
   const [annotationNotes, setAnnotationNotes] = useState('')
   const [annotationStartTime, setAnnotationStartTime] = useState(0)
-  const [annotationEndTime, setAnnotationEndTime] = useState(0)
+  const [annotationDurationInput, setAnnotationDurationInput] = useState('0')
   const [removingAnnotationId, setRemovingAnnotationId] = useState(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [toastOpen, setToastOpen] = useState(false)
@@ -187,8 +192,8 @@ function Annotations() {
       const t = playerRef.current.currentTime()
       setCurrentTime(t)
       setAnnotationStartTime(t)
-      setAnnotationEndTime(t)
     }
+    setAnnotationDurationInput('0')
     setAnnotationLabelId('')
     setAnnotationNotes('')
     setAnnotationType('point')
@@ -213,8 +218,9 @@ function Annotations() {
   const handleAddAnnotation = () => {
     const label = labels.find((l) => l.id === annotationLabelId)
     if (!label) return
-    const start = annotationStartTime
-    const end = annotationType === 'range' ? annotationEndTime : annotationStartTime
+    const start = Math.max(0, annotationStartTime)
+    const rangeDuration = parseNonNegativeDurationInput(annotationDurationInput)
+    const end = annotationType === 'range' ? start + rangeDuration : start
     const annotation = {
       id: crypto.randomUUID(),
       type: annotationType,
@@ -550,17 +556,20 @@ function Annotations() {
             {annotationType === 'range' && (
               <>
                 <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                  End time (seconds)
+                  Duration (seconds)
                 </Typography>
                 <TextField
                   fullWidth
                   type="number"
                   size="small"
-                  value={annotationEndTime}
-                  onChange={(e) => setAnnotationEndTime(Number(e.target.value) || 0)}
+                  value={annotationDurationInput}
+                  onChange={(e) => setAnnotationDurationInput(e.target.value)}
                   inputProps={{ min: 0, step: 0.1 }}
-                  sx={{ mb: 2 }}
+                  sx={{ mb: 0.5 }}
                 />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                  End time: {formatTime(Math.max(0, annotationStartTime) + parseNonNegativeDurationInput(annotationDurationInput))}
+                </Typography>
               </>
             )}
             <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
