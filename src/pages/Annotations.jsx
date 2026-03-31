@@ -79,6 +79,7 @@ function Annotations() {
   const isHoldingHRef = useRef(false)
   const annotationsRef = useRef([])
   const undoneAnnotationsRef = useRef([])
+  const [playbackRate, setPlaybackRate] = useState(1)
 
   const videoFile = location.state?.videoFile // Get the video file from the location state
 
@@ -375,6 +376,12 @@ function Annotations() {
       window.removeEventListener('blur', onWindowBlur)
     }
   }, [labels.length])
+
+  const handlePlaybackRateChange = (_, value) => {
+    if (value == null || !playerRef.current) return
+    playerRef.current.playbackRate(value)
+    setPlaybackRate(value)
+  }
 
   if (!videoFile) {
     return (
@@ -697,6 +704,32 @@ function Annotations() {
 
             {/* Timeline */}
             <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  mb: 1,
+                  gap: 1,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Typography variant="subtitle2" color="text.secondary">
+                  Playback speed
+                </Typography>
+                <ToggleButtonGroup
+                  value={playbackRate}
+                  exclusive
+                  size="small"
+                  onChange={handlePlaybackRateChange}
+                  aria-label="Video playback speed"
+                >
+                  <ToggleButton value={0.5}>0.5x</ToggleButton>
+                  <ToggleButton value={1}>1x</ToggleButton>
+                  <ToggleButton value={1.5}>1.5x</ToggleButton>
+                  <ToggleButton value={2}>2x</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
               <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
                 Timeline
               </Typography>
