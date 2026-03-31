@@ -17,6 +17,8 @@ import {
   MenuItem,
   ToggleButton,
   ToggleButtonGroup,
+  Snackbar,
+  Alert,
 } from '@mui/material'
 import videojs from '../videojs-setup'
 // Load markers plugin after videojs is on window (see videojs-setup.js)
@@ -40,6 +42,18 @@ function parseNonNegativeDurationInput(input) {
   if (raw === '') return 0
   const n = parseFloat(raw)
   return Number.isFinite(n) ? Math.max(0, n) : 0
+const keycapSx = {
+  px: 0.6,
+  py: 0.15,
+  mx: 0.2,
+  borderRadius: 0.75,
+  border: '1px solid',
+  borderColor: 'divider',
+  bgcolor: 'action.hover',
+  fontFamily: 'monospace',
+  fontSize: '0.75rem',
+  fontWeight: 700,
+  lineHeight: 1.2,
 }
 
 function Annotations() {
@@ -49,6 +63,7 @@ function Annotations() {
   const playerRef = useRef(null)
   const [videoUrl, setVideoUrl] = useState(null)
   const [annotations, setAnnotations] = useState([])
+  const [undoneAnnotations, setUndoneAnnotations] = useState([])
   const [labels, setLabels] = useState([])
   const [addLabelOpen, setAddLabelOpen] = useState(false)
   const [labelName, setLabelName] = useState('')
@@ -62,6 +77,14 @@ function Annotations() {
   const [annotationStartTime, setAnnotationStartTime] = useState(0)
   const [annotationDurationInput, setAnnotationDurationInput] = useState('0')
   const [removingAnnotationId, setRemovingAnnotationId] = useState(null)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [toastOpen, setToastOpen] = useState(false)
+  const [toastMessage, setToastMessage] = useState('')
+  const holdHTimeoutRef = useRef(null)
+  const isHoldingHRef = useRef(false)
+  const annotationsRef = useRef([])
+  const undoneAnnotationsRef = useRef([])
+  const [playbackRate, setPlaybackRate] = useState(1)
 
   const videoFile = location.state?.videoFile // Get the video file from the location state
 
@@ -127,6 +150,14 @@ function Annotations() {
     }))
     player.markers.reset(markerList)
   }, [annotations])
+
+  useEffect(() => {
+    annotationsRef.current = annotations
+  }, [annotations])
+
+  useEffect(() => {
+    undoneAnnotationsRef.current = undoneAnnotations
+  }, [undoneAnnotations])
 
   // Open the add label dialog
   const openAddLabel = () => {
@@ -201,7 +232,10 @@ function Annotations() {
       notes: annotationNotes.trim() || undefined,
     }
     setAnnotations((prev) => [...prev, annotation])
+    setUndoneAnnotations([])
     closeAddAnnotation()
+    setToastMessage(`Added annotation "${annotation.labelName}"`)
+    setToastOpen(true)
   }
 
   // Export annotations to CSV
@@ -220,11 +254,139 @@ function Annotations() {
   }
 
   const handleDeleteAnnotation = (id) => {
+    const annotationToRemove = annotations.find((a) => a.id === id)
     setRemovingAnnotationId(id)
     window.setTimeout(() => {
       setAnnotations((prev) => prev.filter((a) => a.id !== id))
+      if (annotationToRemove) {
+        setUndoneAnnotations([])
+      }
       setRemovingAnnotationId((current) => (current === id ? null : current))
+      if (annotationToRemove) {
+        setToastMessage(`Removed annotation "${annotationToRemove.labelName}"`)
+      } else {
+        setToastMessage('Removed annotation')
+      }
+      setToastOpen(true)
     }, 180)
+  }
+
+  const handleUndoLastAnnotation = () => {
+    const currentAnnotations = annotationsRef.current
+    if (currentAnnotations.length === 0) return
+    const removed = currentAnnotations[currentAnnotations.length - 1]
+    setAnnotations((prev) => prev.slice(0, -1))
+    setUndoneAnnotations((redoPrev) => [...redoPrev, removed])
+    setToastMessage(`Removed annotation "${removed.labelName}"`)
+    setToastOpen(true)
+  }
+
+  const handleRedoLastAnnotation = () => {
+    const currentUndone = undoneAnnotationsRef.current
+    if (currentUndone.length === 0) return
+    const restored = currentUndone[currentUndone.length - 1]
+    setUndoneAnnotations((prev) => prev.slice(0, -1))
+    setAnnotations((annotationPrev) => {
+      if (annotationPrev.some((a) => a.id === restored.id)) return annotationPrev
+      return [...annotationPrev, restored]
+    })
+    setToastMessage(`Restored annotation "${restored.labelName}"`)
+    setToastOpen(true)
+  }
+
+  // Keyboard shortcuts:
+  // - a: open "add annotation at current time"
+  // - l: open "add label"
+  // - u: undo (remove latest annotation)
+  // - r: redo the last undone annotation
+  // - hold h: show shortcuts dialog
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target) return false
+      const tagName = target.tagName?.toLowerCase()
+      return (
+        target.isContentEditable ||
+        tagName === 'input' ||
+        tagName === 'textarea' ||
+        tagName === 'select'
+      )
+    }
+
+    const clearHoldTimeout = () => {
+      if (holdHTimeoutRef.current) {
+        window.clearTimeout(holdHTimeoutRef.current)
+        holdHTimeoutRef.current = null
+      }
+    }
+
+    const onKeyDown = (e) => {
+      if (isEditableTarget(e.target)) return
+      if (e.altKey || e.ctrlKey || e.metaKey) return
+
+      const key = e.key.toLowerCase()
+
+      if (key === 'a') {
+        if (labels.length === 0) return
+        e.preventDefault()
+        openAddAnnotation()
+        return
+      }
+
+      if (key === 'l') {
+        e.preventDefault()
+        openAddLabel()
+        return
+      }
+
+      if (key === 'u') {
+        e.preventDefault()
+        handleUndoLastAnnotation()
+        return
+      }
+
+      if (key === 'r') {
+        e.preventDefault()
+        handleRedoLastAnnotation()
+        return
+      }
+
+      if (key === 'h') {
+        if (e.repeat || isHoldingHRef.current) return
+        isHoldingHRef.current = true
+        clearHoldTimeout()
+        holdHTimeoutRef.current = window.setTimeout(() => {
+          setShortcutsOpen(true)
+        }, 550)
+      }
+    }
+
+    const onKeyUp = (e) => {
+      if (e.key.toLowerCase() !== 'h') return
+      isHoldingHRef.current = false
+      clearHoldTimeout()
+    }
+
+    const onWindowBlur = () => {
+      isHoldingHRef.current = false
+      clearHoldTimeout()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onWindowBlur)
+
+    return () => {
+      clearHoldTimeout()
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+    }
+  }, [labels.length])
+
+  const handlePlaybackRateChange = (_, value) => {
+    if (value == null || !playerRef.current) return
+    playerRef.current.playbackRate(value)
+    setPlaybackRate(value)
   }
 
   if (!videoFile) {
@@ -247,6 +409,9 @@ function Annotations() {
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Annotate your video with labels
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        Tip: hold <Box component="kbd" sx={keycapSx}>H</Box> to view keyboard shortcuts.
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', md: 'row' } }}>
@@ -507,6 +672,31 @@ function Annotations() {
           </DialogActions>
         </Dialog>
 
+        {/* Keyboard shortcuts dialog */}
+        <Dialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle>Keyboard shortcuts</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <Box component="kbd" sx={keycapSx}>A</Box> - Add annotation at current time
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <Box component="kbd" sx={keycapSx}>L</Box> - Add label
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <Box component="kbd" sx={keycapSx}>U</Box> - Undo last annotation
+            </Typography>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <Box component="kbd" sx={keycapSx}>R</Box> - Redo last undone annotation
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Hold <Box component="kbd" sx={keycapSx}>H</Box> - Open this shortcuts dialog
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
+            <Button onClick={() => setShortcutsOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
         {/* Right panel - Video and annotations */}
         <Box sx={{ flex: 1, minWidth: 0 }}>
           {/* Video player */}
@@ -523,6 +713,32 @@ function Annotations() {
 
             {/* Timeline */}
             <Box sx={{ px: 2, py: 1.5, borderTop: 1, borderColor: 'divider' }}>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  mb: 1,
+                  gap: 1,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <Typography variant="subtitle2" color="text.secondary">
+                  Playback speed
+                </Typography>
+                <ToggleButtonGroup
+                  value={playbackRate}
+                  exclusive
+                  size="small"
+                  onChange={handlePlaybackRateChange}
+                  aria-label="Video playback speed"
+                >
+                  <ToggleButton value={0.5}>0.5x</ToggleButton>
+                  <ToggleButton value={1}>1x</ToggleButton>
+                  <ToggleButton value={1.5}>1.5x</ToggleButton>
+                  <ToggleButton value={2}>2x</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
               <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
                 Timeline
               </Typography>
@@ -652,6 +868,24 @@ function Annotations() {
           </Paper>
         </Box>
       </Box>
+      <Snackbar
+        open={toastOpen}
+        autoHideDuration={2500}
+        onClose={(_, reason) => {
+          if (reason === 'clickaway') return
+          setToastOpen(false)
+        }}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setToastOpen(false)}
+          severity="success"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {toastMessage}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }

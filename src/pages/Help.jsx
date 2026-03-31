@@ -1,5 +1,19 @@
 import { Box, Typography, Paper, List, ListItem, ListItemText, Divider } from '@mui/material'
 
+const keycapSx = {
+  px: 0.6,
+  py: 0.15,
+  mx: 0.2,
+  borderRadius: 0.75,
+  border: '1px solid',
+  borderColor: 'divider',
+  bgcolor: 'action.hover',
+  fontFamily: 'monospace',
+  fontSize: '0.75rem',
+  fontWeight: 700,
+  lineHeight: 1.2,
+}
+
 function Help() {
   return (
     <Box sx={{ maxWidth: 900, mx: 'auto' }}>
@@ -163,6 +177,68 @@ function Help() {
           <ListItem>
             <ListItemText
               primary="The CSV contains start time, end time, label, and description for each annotation."
+              primaryTypographyProps={{ variant: 'body2' }}
+            />
+          </ListItem>
+        </List>
+      </Paper>
+
+      <Paper sx={{ p: 3, mb: 3, maxWidth: 900 }}>
+        <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
+          Keyboard shortcuts
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          While on the <strong>Video Annotator</strong> page, you can use the keyboard to work
+          faster:
+        </Typography>
+        <List dense sx={{ pl: 1 }}>
+          <ListItem>
+            <ListItemText
+              primary={
+                <>
+                  <Box component="kbd" sx={keycapSx}>A</Box>: open "Add Annotation" at the current playback time
+                </>
+              }
+              primaryTypographyProps={{ variant: 'body2' }}
+            />
+          </ListItem>
+          <ListItem>
+            <ListItemText
+              primary={
+                <>
+                  <Box component="kbd" sx={keycapSx}>L</Box>: open "Add Label"
+                </>
+              }
+              primaryTypographyProps={{ variant: 'body2' }}
+            />
+          </ListItem>
+          <ListItem>
+            <ListItemText
+              primary={
+                <>
+                  <Box component="kbd" sx={keycapSx}>U</Box>: undo the most recently added annotation
+                </>
+              }
+              primaryTypographyProps={{ variant: 'body2' }}
+            />
+          </ListItem>
+          <ListItem>
+            <ListItemText
+              primary={
+                <>
+                  <Box component="kbd" sx={keycapSx}>R</Box>: redo the most recently undone annotation
+                </>
+              }
+              primaryTypographyProps={{ variant: 'body2' }}
+            />
+          </ListItem>
+          <ListItem>
+            <ListItemText
+              primary={
+                <>
+                  Hold <Box component="kbd" sx={keycapSx}>H</Box>: open the keyboard shortcuts dialog
+                </>
+              }
               primaryTypographyProps={{ variant: 'body2' }}
             />
           </ListItem>
