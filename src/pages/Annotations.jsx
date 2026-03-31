@@ -42,6 +42,7 @@ function parseNonNegativeDurationInput(input) {
   if (raw === '') return 0
   const n = parseFloat(raw)
   return Number.isFinite(n) ? Math.max(0, n) : 0
+}
 const keycapSx = {
   px: 0.6,
   py: 0.15,

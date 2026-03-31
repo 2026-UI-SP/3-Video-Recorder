@@ -1,0 +1,3 @@
+- Input duration instead of start/end time (e.g 20s)
+- Keyboard shortcuts for core functionality
+- Buttons to control video playback speed 
