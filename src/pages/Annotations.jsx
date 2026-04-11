@@ -43,6 +43,7 @@ function parseNonNegativeDurationInput(input) {
   const n = parseFloat(raw)
   return Number.isFinite(n) ? Math.max(0, n) : 0
 }
+
 const keycapSx = {
   px: 0.6,
   py: 0.15,
@@ -66,13 +67,26 @@ function Annotations() {
   const [annotations, setAnnotations] = useState([])
   const [undoneAnnotations, setUndoneAnnotations] = useState([])
   const [labels, setLabels] = useState([])
+  
+  // Label creation and editing state
   const [addLabelOpen, setAddLabelOpen] = useState(false)
+  const [editLabelOpen, setEditLabelOpen] = useState(false)
+  const [editingLabelId, setEditingLabelId] = useState(null) // Track which label is being edited
   const [labelName, setLabelName] = useState('')
   const [labelColor, setLabelColor] = useState(LABEL_COLORS[0])
+  
+  // Label deletion state with confirmation
+  const [deleteLabelOpen, setDeleteLabelOpen] = useState(false)
+  const [labelToDelete, setLabelToDelete] = useState(null)
+  const [deleteMode, setDeleteMode] = useState('label-only') // 'label-only' or 'with-annotations' - user chooses whether to delete annotations too
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  
+  // Annotation creation and editing state
   const [addAnnotationOpen, setAddAnnotationOpen] = useState(false)
-  const [annotationType, setAnnotationType] = useState('point')
+  const [editAnnotationOpen, setEditAnnotationOpen] = useState(false) // Dialog for editing existing annotations
+  const [editingAnnotationId, setEditingAnnotationId] = useState(null) // Track which annotation is being edited
+  const [annotationType, setAnnotationType] = useState('point') // 'point' or 'range'
   const [annotationLabelId, setAnnotationLabelId] = useState('')
   const [annotationNotes, setAnnotationNotes] = useState('')
   const [annotationStartTime, setAnnotationStartTime] = useState(0)
@@ -162,7 +176,9 @@ function Annotations() {
     undoneAnnotationsRef.current = undoneAnnotations
   }, [undoneAnnotations])
 
-  // Open the add label dialog
+  // ===== LABEL MANAGEMENT =====
+  // Handles creation, editing, and deletion of labels with automatic annotation updates
+  
   const openAddLabel = () => {
     setLabelName('')
     setLabelColor(LABEL_COLORS[0])
@@ -173,12 +189,77 @@ function Annotations() {
     setAddLabelOpen(false)
   }
 
-  // Create a new label
+  // Opens the edit label dialog with current label data
+  const openEditLabel = (label) => {
+    setEditingLabelId(label.id)
+    setLabelName(label.name)
+    setLabelColor(label.color)
+    setEditLabelOpen(true)
+  }
+
+  const closeEditLabel = () => {
+    setEditLabelOpen(false)
+    setEditingLabelId(null)
+  }
+
   const handleCreateLabel = () => {
     const trimmed = labelName.trim()
     if (!trimmed) return
     setLabels((prev) => [...prev, { id: crypto.randomUUID(), name: trimmed, color: labelColor }])
     closeAddLabel()
+  }
+
+  // Updates label name and color, also updates all annotations using this label
+  const handleUpdateLabel = () => {
+    const trimmed = labelName.trim()
+    if (!trimmed) return
+    
+    // Update the label itself
+    setLabels((prev) =>
+      prev.map((label) =>
+        label.id === editingLabelId ? { ...label, name: trimmed, color: labelColor } : label
+      )
+    )
+    
+    // Update annotations that use this label to reflect the new name and color
+    setAnnotations((prev) =>
+      prev.map((ann) =>
+        ann.labelId === editingLabelId
+          ? { ...ann, labelName: trimmed, labelColor: labelColor }
+          : ann
+      )
+    )
+    
+    closeEditLabel()
+    setToastMessage('Label updated')
+    setToastOpen(true)
+  }
+
+  const openDeleteLabelDialog = (label) => {
+    setLabelToDelete(label)
+    setDeleteMode('label-only')
+    setDeleteLabelOpen(true)
+  }
+
+  // Deletes a label with user-chosen behavior for related annotations
+  // User can choose to delete label only or delete label + all its annotations
+  const handleDeleteLabel = () => {
+    if (!labelToDelete) return
+
+    if (deleteMode === 'with-annotations') {
+      // Delete label AND all annotations that use this label
+      setLabels((prev) => prev.filter((l) => l.id !== labelToDelete.id))
+      setAnnotations((prev) => prev.filter((a) => a.labelId !== labelToDelete.id))
+      setToastMessage(`Deleted label "${labelToDelete.name}" and its annotations`)
+    } else {
+      // Delete only the label, preserve annotations (they'll retain the label name but label won't exist)
+      setLabels((prev) => prev.filter((l) => l.id !== labelToDelete.id))
+      setToastMessage(`Deleted label "${labelToDelete.name}"`)
+    }
+
+    setToastOpen(true)
+    setDeleteLabelOpen(false)
+    setLabelToDelete(null)
   }
 
   // Format time in minutes and seconds
@@ -189,9 +270,13 @@ function Annotations() {
     return `${m}:${s.toString().padStart(2, '0')}`
   }
 
-  // Open the add annotation dialog
+  // ===== ANNOTATION MANAGEMENT =====
+  // Handles creation, editing, and deletion of annotations
+  
+  // Opens add annotation dialog and automatically pauses the video
   const openAddAnnotation = () => {
     if (playerRef.current) {
+      playerRef.current.pause() // Auto-pause for better UX when creating annotations
       const t = playerRef.current.currentTime()
       setCurrentTime(t)
       setAnnotationStartTime(t)
@@ -203,9 +288,27 @@ function Annotations() {
     setAddAnnotationOpen(true)
   }
 
-  // Close the add annotation dialog
   const closeAddAnnotation = () => {
     setAddAnnotationOpen(false)
+  }
+
+  // Opens the edit annotation dialog with current annotation data
+  const openEditAnnotation = (annotation) => {
+    setEditingAnnotationId(annotation.id)
+    setAnnotationStartTime(annotation.start)
+    setAnnotationType(annotation.type)
+    // For range annotations, calculate duration from start and end times
+    setAnnotationDurationInput(
+      annotation.type === 'range' ? String(annotation.end - annotation.start) : '0'
+    )
+    setAnnotationLabelId(annotation.labelId)
+    setAnnotationNotes(annotation.notes || '')
+    setEditAnnotationOpen(true)
+  }
+
+  const closeEditAnnotation = () => {
+    setEditAnnotationOpen(false)
+    setEditingAnnotationId(null)
   }
 
   // Seek to a specific time on the timeline
@@ -238,6 +341,39 @@ function Annotations() {
     setUndoneAnnotations([])
     closeAddAnnotation()
     setToastMessage(`Added annotation "${annotation.labelName}"`)
+    setToastOpen(true)
+  }
+
+  // Updates an existing annotation with new time, label, type, and notes
+  // Supports both point-in-time and time-range annotations
+  const handleUpdateAnnotation = () => {
+    const label = labels.find((l) => l.id === annotationLabelId)
+    if (!label) return
+    
+    const start = Math.max(0, annotationStartTime)
+    const rangeDuration = parseNonNegativeDurationInput(annotationDurationInput)
+    const end = annotationType === 'range' ? start + rangeDuration : start
+
+    setAnnotations((prev) =>
+      prev.map((Ann) =>
+        Ann.id === editingAnnotationId
+          ? {
+              ...Ann,
+              type: annotationType,
+              start,
+              end,
+              labelId: label.id,
+              labelName: label.name,
+              labelColor: label.color,
+              notes: annotationNotes.trim() || undefined,
+            }
+          : Ann
+      )
+    )
+    
+    setUndoneAnnotations([]) // Clear redo stack when making new edits
+    closeEditAnnotation()
+    setToastMessage(`Updated annotation "${label.name}"`)
     setToastOpen(true)
   }
 
@@ -638,6 +774,7 @@ function Annotations() {
               </>
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {/* Labels list with hover-revealed edit/delete buttons */}
                 {labels.map((label) => (
                   <Box
                     key={label.id}
@@ -646,6 +783,17 @@ function Annotations() {
                       alignItems: 'center',
                       gap: 1,
                       justifyContent: 'center',
+                      position: 'relative',
+                      padding: '8px 12px',
+                      borderRadius: 1,
+                      transition: 'background-color 200ms ease',
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                      },
+                      '&:hover .label-actions': {
+                        opacity: 1, // Show action buttons on hover
+                        pointerEvents: 'auto',
+                      },
                     }}
                   >
                     <Box
@@ -657,7 +805,50 @@ function Annotations() {
                         flexShrink: 0,
                       }}
                     />
-                    <Typography variant="body2">{label.name}</Typography>
+                    <Typography variant="body2" sx={{ flex: 1 }}>
+                      {label.name}
+                    </Typography>
+                    {/* Edit and Delete buttons appear on label hover */}
+                    <Box
+                      className="label-actions"
+                      sx={{
+                        display: 'flex',
+                        gap: 0.5,
+                        opacity: 0, // Hidden by default, revealed on hover
+                        pointerEvents: 'none',
+                        transition: 'opacity 200ms ease',
+                      }}
+                    >
+                      <Tooltip title="Edit label">
+                        <Button
+                          size="small"
+                          onClick={() => openEditLabel(label)}
+                          sx={{
+                            minWidth: 0,
+                            px: 0.75,
+                            fontSize: '0.8rem',
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          ✎
+                        </Button>
+                      </Tooltip>
+                      <Tooltip title="Delete label">
+                        <Button
+                          size="small"
+                          color="error"
+                          onClick={() => openDeleteLabelDialog(label)}
+                          sx={{
+                            minWidth: 0,
+                            px: 0.75,
+                            fontSize: '0.9rem',
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          ✕
+                        </Button>
+                      </Tooltip>
+                    </Box>
                   </Box>
                 ))}
               </Box>
@@ -802,9 +993,108 @@ function Annotations() {
           </DialogActions>
         </Dialog>
 
+        {/* Edit Annotation dialog - allows full modification of annotation properties */}
+        {/* User can change: time, annotation type (point/range), label, and notes */}
+        <Dialog open={editAnnotationOpen} onClose={closeEditAnnotation} maxWidth="xs" fullWidth>
+          <DialogTitle>Edit Annotation</DialogTitle>
+          <DialogContent>
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 1, mb: 0.5 }}>
+              Start time (seconds)
+            </Typography>
+            <TextField
+              fullWidth
+              type="number"
+              size="small"
+              value={annotationStartTime}
+              onChange={(e) => setAnnotationStartTime(Number(e.target.value) || 0)}
+              inputProps={{ min: 0, step: 0.1 }}
+              sx={{ mb: 2 }}
+            />
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+              Annotation Type
+            </Typography>
+            <ToggleButtonGroup
+              value={annotationType}
+              exclusive
+              onChange={(_, v) => v != null && setAnnotationType(v)}
+              size="small"
+              sx={{ mb: 2 }}
+            >
+              <ToggleButton value="point">Point in Time</ToggleButton>
+              <ToggleButton value="range">Time Range</ToggleButton>
+            </ToggleButtonGroup>
+            {annotationType === 'range' && (
+              <>
+                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                  Duration (seconds)
+                </Typography>
+                <TextField
+                  fullWidth
+                  type="number"
+                  size="small"
+                  value={annotationDurationInput}
+                  onChange={(e) => setAnnotationDurationInput(e.target.value)}
+                  inputProps={{ min: 0, step: 0.1 }}
+                  sx={{ mb: 0.5 }}
+                />
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                  End time: {formatTime(Math.max(0, annotationStartTime) + parseNonNegativeDurationInput(annotationDurationInput))}
+                </Typography>
+              </>
+            )}
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+              Select Label
+            </Typography>
+            <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+              <InputLabel id="edit-annotation-label-label">Choose a label...</InputLabel>
+              <Select
+                labelId="edit-annotation-label-label"
+                value={annotationLabelId}
+                label="Choose a label..."
+                onChange={(e) => setAnnotationLabelId(e.target.value)}
+              >
+                {labels.map((label) => (
+                  <MenuItem key={label.id} value={label.id}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box
+                        sx={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: '50%',
+                          bgcolor: label.color,
+                        }}
+                      />
+                      {label.name}
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+              Notes (optional)
+            </Typography>
+            <TextField
+              fullWidth
+              multiline
+              rows={3}
+              placeholder="Add any additional notes..."
+              value={annotationNotes}
+              onChange={(e) => setAnnotationNotes(e.target.value)}
+              variant="outlined"
+              size="small"
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
+            <Button onClick={closeEditAnnotation}>Cancel</Button>
+            <Button variant="contained" onClick={handleUpdateAnnotation} disabled={!annotationLabelId}>
+              Update
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         {/* Add Label dialog */}
         <Dialog open={addLabelOpen} onClose={closeAddLabel} maxWidth="xs" fullWidth>
-          <DialogTitle>Add Label Dialogue</DialogTitle>
+          <DialogTitle>Add Label</DialogTitle>
           <DialogContent>
             <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 1, mb: 0.5 }}>
               Label Name
@@ -848,6 +1138,93 @@ function Annotations() {
             </Button>
             <Button variant="contained" onClick={handleCreateLabel} disabled={!labelName.trim()}>
               Create Label
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Edit Label dialog - allows user to change label name and color */}
+        {/* All annotations using this label are automatically updated */}
+        <Dialog open={editLabelOpen} onClose={closeEditLabel} maxWidth="xs" fullWidth>
+          <DialogTitle>Edit Label</DialogTitle>
+          <DialogContent>
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 1, mb: 0.5 }}>
+              Label Name
+            </Typography>
+            <TextField
+              fullWidth
+              placeholder="e.g. Smile, Surprise"
+              value={labelName}
+              onChange={(e) => setLabelName(e.target.value)}
+              variant="outlined"
+              size="small"
+              sx={{ mb: 2 }}
+              inputProps={{ 'aria-label': 'Label name' }}
+            />
+            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+              Color
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
+              {LABEL_COLORS.map((color) => (
+                <Box
+                  key={color}
+                  onClick={() => setLabelColor(color)}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: '50%',
+                    bgcolor: color,
+                    cursor: 'pointer',
+                    border: '3px solid',
+                    borderColor: labelColor === color ? 'grey.800' : 'transparent',
+                    '&:hover': { opacity: 0.9 },
+                  }}
+                  aria-label={`Select color ${color}`}
+                />
+              ))}
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
+            <Button onClick={closeEditLabel} sx={{ bgcolor: 'grey.200', color: 'grey.800' }}>
+              Cancel
+            </Button>
+            <Button variant="contained" onClick={handleUpdateLabel} disabled={!labelName.trim()}>
+              Update Label
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Delete Label confirmation dialog with two deletion modes */}
+        {/* User can choose to delete label only or delete label + all its annotations */}
+        <Dialog open={deleteLabelOpen} onClose={() => setDeleteLabelOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle>Delete Label?</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              Label: <strong>{labelToDelete?.name}</strong>
+            </Typography>
+            {/* Show count of annotations using this label to help user decide */}
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              This label has {annotations.filter(a => a.labelId === labelToDelete?.id).length} annotation(s).
+            </Typography>
+            {/* Allow user to choose deletion behavior */}
+            <FormControl fullWidth size="small">
+              <InputLabel id="delete-mode-label">Delete mode</InputLabel>
+              <Select
+                labelId="delete-mode-label"
+                value={deleteMode}
+                label="Delete mode"
+                onChange={(e) => setDeleteMode(e.target.value)}
+              >
+                <MenuItem value="label-only">Delete label only (keep annotations)</MenuItem>
+                <MenuItem value="with-annotations">Delete label and all its annotations</MenuItem>
+              </Select>
+            </FormControl>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
+            <Button onClick={() => setDeleteLabelOpen(false)} sx={{ bgcolor: 'grey.200', color: 'grey.800' }}>
+              Cancel
+            </Button>
+            <Button variant="contained" color="error" onClick={handleDeleteLabel}>
+              Delete
             </Button>
           </DialogActions>
         </Dialog>
@@ -1027,6 +1404,7 @@ function Annotations() {
               </Typography>
             ) : (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                {/* Render all annotations sorted by start time */}
                 {annotations
                   .slice()
                   .sort((a, b) => a.start - b.start)
@@ -1068,6 +1446,17 @@ function Annotations() {
                           </Typography>
                         )}
                       </Box>
+                      {/* Edit annotation button - allows user to modify time, label, type, and notes */}
+                      <Tooltip title="Edit annotation">
+                        <Button
+                          size="small"
+                          onClick={() => openEditAnnotation(a)}
+                          sx={{ minWidth: 0, px: 1, fontSize: '0.85rem', lineHeight: 1.2 }}
+                        >
+                          ✎
+                        </Button>
+                      </Tooltip>
+                      {/* Delete annotation button */}
                       <Tooltip title="Delete annotation">
                         <Button
                           size="small"
