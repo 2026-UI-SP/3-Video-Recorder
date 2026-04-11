@@ -86,6 +86,8 @@ function Annotations() {
   const annotationsRef = useRef([])
   const undoneAnnotationsRef = useRef([])
   const [playbackRate, setPlaybackRate] = useState(1)
+  const [durationMismatchOpen, setDurationMismatchOpen] = useState(false)
+  const pendingImportRef = useRef(null)
 
   const videoFile = location.state?.videoFile // Get the video file from the location state
 
@@ -241,17 +243,185 @@ function Annotations() {
 
   // Export annotations to CSV
   const handleExportCsv = () => {
+    const metadata = `# Duration: ${duration}\n`
     const header = 'start,end,label,description\n'
-    const rows = annotations.map((a) => `${a.start},${a.end},${a.labelName || ''},${a.notes || ''}`).join('\n')
-    const blob = new Blob([header + rows], { type: 'text/csv' })
+    const rows = annotations
+      .slice()
+      .sort((a, b) => a.start - b.start)
+      .map((a) => `${a.start},${a.end},${a.labelName || ''},${a.notes || ''}`)
+      .join('\n')
+    const blob = new Blob([metadata + header + rows], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url 
+    a.href = url
     const baseName =
       (videoFile?.name && videoFile.name.replace(/\.[^/.]+$/, '')) || 'annotations'
     a.download = `${baseName}-annotations.csv`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  // Process imported annotations
+  const processImportedAnnotations = (importedAnnotations, newLabels) => {
+    // Filter out annotations that exceed video duration
+    const validAnnotations = importedAnnotations.filter(
+      ann => ann.start <= duration && ann.end <= duration
+    )
+    const outOfBoundsCount = importedAnnotations.length - validAnnotations.length
+
+    // Update labels and annotations, filtering out duplicates
+    setLabels(newLabels)
+    setAnnotations(prev => {
+      const existing = new Set(
+        prev.map(ann => `${ann.labelName}|${ann.start}`)
+      )
+      const filtered = validAnnotations.filter(
+        ann => !existing.has(`${ann.labelName}|${ann.start}`)
+      )
+      const duplicateCount = validAnnotations.length - filtered.length
+      
+      let message = `Imported ${filtered.length} annotation${filtered.length !== 1 ? 's' : ''}`
+      if (duplicateCount > 0) {
+        message += ` (${duplicateCount} duplicate${duplicateCount !== 1 ? 's' : ''} skipped)`
+      }
+      if (outOfBoundsCount > 0) {
+        message += ` (${outOfBoundsCount} outside video duration skipped)`
+      }
+      setToastMessage(message)
+      return [...prev, ...filtered]
+    })
+    setUndoneAnnotations([])
+    setToastOpen(true)
+  }
+
+  // Parse and import annotations from CSV
+  const handleImportCsv = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    
+    try {
+      const text = await file.text()
+      const lines = text.trim().split('\n')
+      
+      if (lines.length < 2) {
+        setToastMessage('CSV file must have a header row and at least one data row')
+        setToastOpen(true)
+        return
+      }
+
+      // Check for duration metadata
+      let headerLineIdx = 0
+      let csvDuration = null
+      let hasDurationMismatch = false
+      
+      if (lines[0].startsWith('# Duration:')) {
+        csvDuration = parseFloat(lines[0].split(':')[1].trim())
+        // Allow 1 second tolerance for duration mismatch
+        if (!isNaN(csvDuration) && Math.abs(csvDuration - duration) > 1) {
+          hasDurationMismatch = true
+        }
+        headerLineIdx = 1
+      }
+
+      // Parse header
+      const headers = lines[headerLineIdx].split(',').map(h => h.trim().toLowerCase())
+      const startIdx = headers.indexOf('start')
+      const endIdx = headers.indexOf('end')
+      const labelIdx = headers.indexOf('label')
+      const descIdx = headers.indexOf('description')
+
+      if (startIdx === -1 || labelIdx === -1) {
+        setToastMessage('CSV must have "start" and "label" columns')
+        setToastOpen(true)
+        event.target.value = ''
+        return
+      }
+
+      // Parse data rows
+      const importedAnnotations = []
+      const newLabels = [...labels]
+
+      for (let i = headerLineIdx + 1; i < lines.length; i++) {
+        const line = lines[i].trim()
+        if (!line) continue
+
+        const parts = line.split(',').map(p => p.trim())
+        const startTime = parseFloat(parts[startIdx])
+        const labelName = parts[labelIdx]
+        const description = descIdx !== -1 ? parts[descIdx] : ''
+        const endTime = endIdx !== -1 ? parseFloat(parts[endIdx]) : startTime
+
+        if (isNaN(startTime) || !labelName) continue
+
+        // Find or create label
+        let label = newLabels.find(l => l.name.toLowerCase() === labelName.toLowerCase())
+        if (!label) {
+          const colorIdx = newLabels.length % LABEL_COLORS.length
+          label = {
+            id: crypto.randomUUID(),
+            name: labelName,
+            color: LABEL_COLORS[colorIdx],
+          }
+          newLabels.push(label)
+        }
+
+        importedAnnotations.push({
+          id: crypto.randomUUID(),
+          type: isNaN(endTime) || endTime === startTime ? 'point' : 'range',
+          start: startTime,
+          end: isNaN(endTime) ? startTime : endTime,
+          labelId: label.id,
+          labelName: label.name,
+          labelColor: label.color,
+          notes: description || undefined,
+        })
+      }
+
+      if (importedAnnotations.length === 0) {
+        setToastMessage('No valid annotations found in CSV file')
+        setToastOpen(true)
+        return
+      }
+
+      // If there's a duration mismatch, show confirmation dialog
+      if (hasDurationMismatch) {
+        pendingImportRef.current = { importedAnnotations, newLabels }
+        setDurationMismatchOpen(true)
+        return
+      }
+
+      // Otherwise proceed with import
+      processImportedAnnotations(importedAnnotations, newLabels)
+      event.target.value = ''
+    } catch (error) {
+      console.error('Error importing CSV:', error)
+      setToastMessage('Error reading CSV file')
+      setToastOpen(true)
+    }
+
+    // Reset file input
+    event.target.value = ''
+  }
+
+  const handleConfirmImport = () => {
+    if (pendingImportRef.current) {
+      const { importedAnnotations, newLabels } = pendingImportRef.current
+      processImportedAnnotations(importedAnnotations, newLabels)
+      pendingImportRef.current = null
+    }
+    setDurationMismatchOpen(false)
+  }
+
+  const handleCancelImport = () => {
+    pendingImportRef.current = null
+    setDurationMismatchOpen(false)
+    // Find and reset the file input
+    const fileInputs = document.querySelectorAll('input[type="file"]')
+    fileInputs.forEach(input => {
+      if (input.getAttribute('accept')?.includes('csv')) {
+        input.value = ''
+      }
+    })
   }
 
   const handleDeleteAnnotation = (id) => {
@@ -296,6 +466,7 @@ function Annotations() {
   }
 
   // Keyboard shortcuts:
+  // - space: play/pause
   // - a: open "add annotation at current time"
   // - l: open "add label"
   // - u: undo (remove latest annotation)
@@ -325,6 +496,14 @@ function Annotations() {
       if (e.altKey || e.ctrlKey || e.metaKey) return
 
       const key = e.key.toLowerCase()
+
+      if (key === ' ') {
+        e.preventDefault()
+        if (playerRef.current) {
+          playerRef.current.paused() ? playerRef.current.play() : playerRef.current.pause()
+        }
+        return
+      }
 
       if (key === 'a') {
         if (labels.length === 0) return
@@ -673,10 +852,31 @@ function Annotations() {
           </DialogActions>
         </Dialog>
 
+        {/* Duration mismatch confirmation dialog */}
+        <Dialog open={durationMismatchOpen} onClose={handleCancelImport}>
+          <DialogTitle>Duration Mismatch</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">
+              The CSV file appears to be from a different video. Are you sure you want to upload it to this video? Annotations outside the video duration will be skipped.
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
+            <Button onClick={handleCancelImport} sx={{ bgcolor: 'grey.200', color: 'grey.800' }}>
+              Cancel
+            </Button>
+            <Button variant="contained" onClick={handleConfirmImport} color="warning">
+              Upload Anyway
+            </Button>
+          </DialogActions>
+        </Dialog>
+
         {/* Keyboard shortcuts dialog */}
         <Dialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} maxWidth="xs" fullWidth>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogContent>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <Box component="kbd" sx={keycapSx}>Space</Box> - Play / Pause
+            </Typography>
             <Typography variant="body2" sx={{ mb: 1 }}>
               <Box component="kbd" sx={keycapSx}>A</Box> - Add annotation at current time
             </Typography>
@@ -795,15 +995,31 @@ function Annotations() {
             </Box>
           </Paper>
 
-          {/* Annotations list + Export CSV */}
+          {/* Annotations list + Export/Import CSV */}
           <Paper sx={{ p: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
               <Typography variant="subtitle1" fontWeight={600}>
                 Annotations ({annotations.length})
               </Typography>
-              <Button variant="outlined" size="small" onClick={handleExportCsv}>
-                Export CSV
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleImportCsv}
+                  style={{ display: 'none' }}
+                  id="csv-import-input"
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => document.getElementById('csv-import-input')?.click()}
+                >
+                  Import CSV
+                </Button>
+                <Button variant="outlined" size="small" onClick={handleExportCsv}>
+                  Export CSV
+                </Button>
+              </Box>
             </Box>
             {annotations.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
