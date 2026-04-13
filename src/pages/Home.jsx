@@ -2,6 +2,12 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Typography, Box, Button } from '@mui/material'
 import VideoFileDropZone from '../components/VideoFileDropZone'
+import {
+  SESSION_KEY_STORAGE,
+  getVideoSessionKey,
+  clearPersistedData,
+  deleteVideoBlob,
+} from '../utils/videoAnnotationPersistence'
 
 function Home() {
   const navigate = useNavigate()
@@ -11,10 +17,22 @@ function Home() {
     setSelectedFile(file ?? null)
   }
 
-  const handleProceed = () => {
-    if (selectedFile) {
-      navigate('/annotations', { state: { videoFile: selectedFile } })
+  const handleProceed = async () => {
+    if (!selectedFile) return
+
+    const nextKey = getVideoSessionKey(selectedFile)
+    const previousKey = sessionStorage.getItem(SESSION_KEY_STORAGE)
+
+    if (previousKey) {
+      clearPersistedData(previousKey)
+      if (previousKey !== nextKey) {
+        await deleteVideoBlob(previousKey)
+      }
     }
+
+    clearPersistedData(nextKey)
+    sessionStorage.setItem(SESSION_KEY_STORAGE, nextKey)
+    navigate('/annotations', { state: { videoFile: selectedFile } })
   }
 
   return (

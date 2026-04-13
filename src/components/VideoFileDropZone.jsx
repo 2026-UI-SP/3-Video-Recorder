@@ -184,7 +184,7 @@ export default function VideoFileDropZone({ onFileSelect }) {
               sx={{ color: isDragOver ? 'primary.main' : 'text.secondary', mb: 1 }}
             />
             <Typography variant="h6" color="text.primary" gutterBottom>
-              Select your video here, or click to browse
+              Drop your video here, or click to browse
             </Typography>
             <Typography variant="body2" color="text.secondary">
               MP4, WebM, OGG, MOV, AVI

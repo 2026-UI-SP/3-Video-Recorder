@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import { AppBar, Toolbar, Typography, Box, IconButton } from '@mui/material'
 import { useThemeMode } from '../context/ThemeModeContext'
+import { SESSION_KEY_STORAGE } from '../utils/videoAnnotationPersistence'
 
 const navLinks = [
   { to: '/', label: 'Home' },
@@ -31,6 +32,11 @@ const MoonIcon = () => (
 function Header() {
   const location = useLocation()
   const { mode, toggleMode } = useThemeMode()
+  const hasSavedSession =
+    typeof sessionStorage !== 'undefined' && Boolean(sessionStorage.getItem(SESSION_KEY_STORAGE))
+  const links = hasSavedSession
+    ? [...navLinks, { to: '/annotations', label: 'Annotate' }]
+    : navLinks
 
   return (
     <AppBar position="static" sx={{ bgcolor: 'primary.main' }}>
@@ -40,7 +46,7 @@ function Header() {
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <Box component="nav" sx={{ display: 'flex', gap: 1 }}>
-            {navLinks.map(({ to, label }) => (
+            {links.map(({ to, label }) => (
               <Typography
                 key={to}
                 component={Link}

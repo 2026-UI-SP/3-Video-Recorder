@@ -1,6 +1,14 @@
 import { useRef, useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
+  getVideoSessionKey,
+  loadPersistedData,
+  savePersistedData,
+  saveVideoBlob,
+  loadVideoBlob,
+  SESSION_KEY_STORAGE,
+} from '../utils/videoAnnotationPersistence'
+import {
   Typography,
   Box,
   Paper,
@@ -37,11 +45,22 @@ const LABEL_COLORS = [
   '#5e35b1', // deep purple
 ]
 
+const SHORTCUTS_BANNER_DISMISSED_KEY = 'videoAnnotatorShortcutsBannerDismissed'
+
+/** Seconds stored and exported with fixed precision to avoid float noise (e.g. 1.7999999999). */
+const TIME_DECIMAL_PLACES = 3
+
+function roundSeconds(n) {
+  if (!Number.isFinite(n)) return 0
+  const factor = 10 ** TIME_DECIMAL_PLACES
+  return Math.round(n * factor) / factor
+}
+
 function parseNonNegativeDurationInput(input) {
   const raw = String(input).trim()
   if (raw === '') return 0
   const n = parseFloat(raw)
-  return Number.isFinite(n) ? Math.max(0, n) : 0
+  return Number.isFinite(n) ? roundSeconds(Math.max(0, n)) : 0
 }
 
 const keycapSx = {
@@ -93,6 +112,15 @@ function Annotations() {
   const [annotationDurationInput, setAnnotationDurationInput] = useState('0')
   const [removingAnnotationId, setRemovingAnnotationId] = useState(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [shortcutsBannerVisible, setShortcutsBannerVisible] = useState(() => {
+    if (typeof localStorage === 'undefined') return true
+    try {
+      return localStorage.getItem(SHORTCUTS_BANNER_DISMISSED_KEY) !== '1'
+    } catch {
+      return true
+    }
+  })
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
   const [toastOpen, setToastOpen] = useState(false)
   const [toastMessage, setToastMessage] = useState('')
   const holdHTimeoutRef = useRef(null)
@@ -103,14 +131,71 @@ function Annotations() {
   const [durationMismatchOpen, setDurationMismatchOpen] = useState(false)
   const pendingImportRef = useRef(null)
 
-  const videoFile = location.state?.videoFile // Get the video file from the location state
+  const videoFileFromState = location.state?.videoFile
+  const [restoredVideoFile, setRestoredVideoFile] = useState(null)
+  const [sessionRestored, setSessionRestored] = useState(() => {
+    if (typeof sessionStorage === 'undefined') return true
+    if (location.state?.videoFile) return true
+    if (!sessionStorage.getItem(SESSION_KEY_STORAGE)) return true
+    return false
+  })
+  const persistEnabledRef = useRef(false)
+
+  const effectiveVideoFile = videoFileFromState || restoredVideoFile
 
   useEffect(() => {
-    if (!videoFile) return
-    const url = URL.createObjectURL(videoFile)
+    if (videoFileFromState) return
+    const key = sessionStorage.getItem(SESSION_KEY_STORAGE)
+    if (!key) {
+      setSessionRestored(true)
+      return
+    }
+    let cancelled = false
+    loadVideoBlob(key).then((blob) => {
+      if (cancelled) return
+      if (blob) {
+        const file =
+          blob instanceof File
+            ? blob
+            : new File([blob], 'video', { type: blob.type || 'video/mp4' })
+        setRestoredVideoFile(file)
+      }
+      setSessionRestored(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [videoFileFromState])
+
+  useEffect(() => {
+    if (!effectiveVideoFile) return
+    const url = URL.createObjectURL(effectiveVideoFile)
     setVideoUrl(url)
     return () => URL.revokeObjectURL(url)
-  }, [videoFile])
+  }, [effectiveVideoFile])
+
+  useEffect(() => {
+    if (!effectiveVideoFile) return
+    const key = getVideoSessionKey(effectiveVideoFile)
+    sessionStorage.setItem(SESSION_KEY_STORAGE, key)
+    saveVideoBlob(key, effectiveVideoFile)
+
+    const persisted = loadPersistedData(key)
+    if (persisted) {
+      setAnnotations(persisted.annotations)
+      setLabels(persisted.labels)
+    }
+    persistEnabledRef.current = false
+    queueMicrotask(() => {
+      persistEnabledRef.current = true
+    })
+  }, [effectiveVideoFile])
+
+  useEffect(() => {
+    if (!effectiveVideoFile || !persistEnabledRef.current) return
+    const key = getVideoSessionKey(effectiveVideoFile)
+    savePersistedData(key, annotations, labels)
+  }, [annotations, labels, effectiveVideoFile])
 
   useEffect(() => {
     if (!videoRef.current || !videoUrl) return
@@ -119,13 +204,13 @@ function Annotations() {
       controls: true,
       responsive: true,
       fluid: true,
-      sources: [{ src: videoUrl, type: videoFile?.type || 'video/mp4' }],
+      sources: [{ src: videoUrl, type: effectiveVideoFile?.type || 'video/mp4' }],
     })
 
     playerRef.current = player
 
-    const onTimeUpdate = () => setCurrentTime(player.currentTime())
-    const onDurationChange = () => setDuration(player.duration())
+    const onTimeUpdate = () => setCurrentTime(roundSeconds(player.currentTime()))
+    const onDurationChange = () => setDuration(roundSeconds(player.duration()))
 
     player.on('timeupdate', onTimeUpdate)
     player.on('durationchange', onDurationChange)
@@ -155,7 +240,7 @@ function Annotations() {
       player.dispose()
       playerRef.current = null
     }
-  }, [videoUrl, videoFile?.type])
+  }, [videoUrl, effectiveVideoFile?.type])
 
   // Sync annotations to videojs-markers on the player progress bar
   useEffect(() => {
@@ -205,6 +290,7 @@ function Annotations() {
   const handleCreateLabel = () => {
     const trimmed = labelName.trim()
     if (!trimmed) return
+    if (labels.some((l) => l.name.toLowerCase() === trimmed.toLowerCase())) return
     setLabels((prev) => [...prev, { id: crypto.randomUUID(), name: trimmed, color: labelColor }])
     closeAddLabel()
   }
@@ -229,7 +315,14 @@ function Annotations() {
           : ann
       )
     )
-    
+    setUndoneAnnotations((prev) =>
+      prev.map((ann) =>
+        ann.labelId === editingLabelId
+          ? { ...ann, labelName: trimmed, labelColor: labelColor }
+          : ann
+      ),
+    )
+
     closeEditLabel()
     setToastMessage('Label updated')
     setToastOpen(true)
@@ -250,15 +343,20 @@ function Annotations() {
       // Delete label AND all annotations that use this label
       setLabels((prev) => prev.filter((l) => l.id !== labelToDelete.id))
       setAnnotations((prev) => prev.filter((a) => a.labelId !== labelToDelete.id))
+      setUndoneAnnotations((prev) => prev.filter((a) => a.labelId !== labelToDelete.id))
       setToastMessage(`Deleted label "${labelToDelete.name}" and its annotations`)
     } else {
       // Delete only the label, preserve annotations (they'll retain the label name but label won't exist)
       setLabels((prev) => prev.filter((l) => l.id !== labelToDelete.id))
+      setUndoneAnnotations((prev) => prev.filter((a) => a.labelId !== labelToDelete.id))
       setToastMessage(`Deleted label "${labelToDelete.name}"`)
     }
 
+    if (annotationLabelId === labelToDelete.id) setAnnotationLabelId('')
+
     setToastOpen(true)
     setDeleteLabelOpen(false)
+    if (editingLabelId === labelToDelete.id) closeEditLabel()
     setLabelToDelete(null)
   }
 
@@ -277,7 +375,7 @@ function Annotations() {
   const openAddAnnotation = () => {
     if (playerRef.current) {
       playerRef.current.pause() // Auto-pause for better UX when creating annotations
-      const t = playerRef.current.currentTime()
+      const t = roundSeconds(playerRef.current.currentTime())
       setCurrentTime(t)
       setAnnotationStartTime(t)
     }
@@ -320,13 +418,19 @@ function Annotations() {
     playerRef.current.currentTime(pct * duration)
   }
 
+  const handleSeekToAnnotation = (annotation) => {
+    if (!playerRef.current) return
+    const t = Math.max(0, Number(annotation.start) || 0)
+    playerRef.current.currentTime(t)
+  }
+
   // Add an annotation to the video
   const handleAddAnnotation = () => {
     const label = labels.find((l) => l.id === annotationLabelId)
     if (!label) return
-    const start = Math.max(0, annotationStartTime)
+    const start = roundSeconds(Math.max(0, annotationStartTime))
     const rangeDuration = parseNonNegativeDurationInput(annotationDurationInput)
-    const end = annotationType === 'range' ? start + rangeDuration : start
+    const end = roundSeconds(annotationType === 'range' ? start + rangeDuration : start)
     const annotation = {
       id: crypto.randomUUID(),
       type: annotationType,
@@ -350,9 +454,9 @@ function Annotations() {
     const label = labels.find((l) => l.id === annotationLabelId)
     if (!label) return
     
-    const start = Math.max(0, annotationStartTime)
+    const start = roundSeconds(Math.max(0, annotationStartTime))
     const rangeDuration = parseNonNegativeDurationInput(annotationDurationInput)
-    const end = annotationType === 'range' ? start + rangeDuration : start
+    const end = roundSeconds(annotationType === 'range' ? start + rangeDuration : start)
 
     setAnnotations((prev) =>
       prev.map((Ann) =>
@@ -379,19 +483,23 @@ function Annotations() {
 
   // Export annotations to CSV
   const handleExportCsv = () => {
-    const metadata = `# Duration: ${duration}\n`
+    const metadata = `# Duration: ${roundSeconds(duration)}\n`
     const header = 'start,end,label,description\n'
     const rows = annotations
       .slice()
       .sort((a, b) => a.start - b.start)
-      .map((a) => `${a.start},${a.end},${a.labelName || ''},${a.notes || ''}`)
+      .map(
+        (a) =>
+          `${roundSeconds(Number(a.start) || 0)},${roundSeconds(Number(a.end) || 0)},${a.labelName || ''},${a.notes || ''}`,
+      )
       .join('\n')
     const blob = new Blob([metadata + header + rows], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     const baseName =
-      (videoFile?.name && videoFile.name.replace(/\.[^/.]+$/, '')) || 'annotations'
+      (effectiveVideoFile?.name && effectiveVideoFile.name.replace(/\.[^/.]+$/, '')) ||
+      'annotations'
     a.download = `${baseName}-annotations.csv`
     a.click()
     URL.revokeObjectURL(url)
@@ -504,8 +612,8 @@ function Annotations() {
         importedAnnotations.push({
           id: crypto.randomUUID(),
           type: isNaN(endTime) || endTime === startTime ? 'point' : 'range',
-          start: startTime,
-          end: isNaN(endTime) ? startTime : endTime,
+          start: roundSeconds(startTime),
+          end: roundSeconds(isNaN(endTime) ? startTime : endTime),
           labelId: label.id,
           labelName: label.name,
           labelColor: label.color,
@@ -705,7 +813,44 @@ function Annotations() {
     setPlaybackRate(value)
   }
 
-  if (!videoFile) {
+  const trimmedAddLabelName = labelName.trim()
+  const isDuplicateCreateLabel =
+    addLabelOpen &&
+    trimmedAddLabelName.length > 0 &&
+    labels.some((l) => l.name.toLowerCase() === trimmedAddLabelName.toLowerCase())
+
+  const handleDismissShortcutsBanner = () => {
+    try {
+      localStorage.setItem(SHORTCUTS_BANNER_DISMISSED_KEY, '1')
+    } catch {
+      // ignore
+    }
+    setShortcutsBannerVisible(false)
+  }
+
+  const handleConfirmResetAnnotations = () => {
+    if (!effectiveVideoFile) return
+    const key = getVideoSessionKey(effectiveVideoFile)
+    savePersistedData(key, [], [])
+    setAnnotations([])
+    setLabels([])
+    setUndoneAnnotations([])
+    setResetDialogOpen(false)
+    setToastMessage('Annotations and labels cleared')
+    setToastOpen(true)
+  }
+
+  if (!sessionRestored) {
+    return (
+      <Box sx={{ textAlign: 'center', py: 4 }}>
+        <Typography variant="body2" color="text.secondary">
+          Restoring your session…
+        </Typography>
+      </Box>
+    )
+  }
+
+  if (!effectiveVideoFile) {
     return (
       <Box sx={{ textAlign: 'center', py: 4 }}>
         <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -726,9 +871,29 @@ function Annotations() {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Annotate your video with labels
       </Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-        Tip: hold <Box component="kbd" sx={keycapSx}>H</Box> to view keyboard shortcuts.
-      </Typography>
+      {shortcutsBannerVisible && (
+        <Alert
+          severity="info"
+          variant="outlined"
+          onClose={handleDismissShortcutsBanner}
+          sx={{
+            mb: 2,
+            alignItems: 'flex-start',
+            borderWidth: 2,
+            py: 1.25,
+            '& .MuiAlert-icon': { pt: 0.25 },
+          }}
+        >
+          <Box>
+            <Typography variant="subtitle2" component="p" fontWeight={700} sx={{ mb: 0.5 }}>
+              Keyboard shortcuts
+            </Typography>
+            <Typography variant="body2" color="text.secondary" component="p" sx={{ m: 0, lineHeight: 1.5 }}>
+              Hold <Box component="kbd" sx={keycapSx}>H</Box> for a moment to open the shortcuts list.
+            </Typography>
+          </Box>
+        </Alert>
+      )}
 
       <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', md: 'row' } }}>
         {/* Left panel - Labels */}
@@ -907,8 +1072,16 @@ function Annotations() {
               type="number"
               size="small"
               value={annotationStartTime}
-              onChange={(e) => setAnnotationStartTime(Number(e.target.value) || 0)}
-              inputProps={{ min: 0, step: 0.1 }}
+              onChange={(e) => {
+                const raw = e.target.value
+                if (raw === '') {
+                  setAnnotationStartTime(0)
+                  return
+                }
+                const v = Number(raw)
+                setAnnotationStartTime(Number.isFinite(v) ? roundSeconds(v) : 0)
+              }}
+              inputProps={{ min: 0, step: 0.001 }}
               sx={{ mb: 2 }}
             />
             <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
@@ -935,11 +1108,17 @@ function Annotations() {
                   size="small"
                   value={annotationDurationInput}
                   onChange={(e) => setAnnotationDurationInput(e.target.value)}
-                  inputProps={{ min: 0, step: 0.1 }}
+                  inputProps={{ min: 0, step: 0.001 }}
                   sx={{ mb: 0.5 }}
                 />
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                  End time: {formatTime(Math.max(0, annotationStartTime) + parseNonNegativeDurationInput(annotationDurationInput))}
+                  End time:{' '}
+                  {formatTime(
+                    roundSeconds(
+                      Math.max(0, annotationStartTime) +
+                        parseNonNegativeDurationInput(annotationDurationInput),
+                    ),
+                  )}
                 </Typography>
               </>
             )}
@@ -1006,8 +1185,16 @@ function Annotations() {
               type="number"
               size="small"
               value={annotationStartTime}
-              onChange={(e) => setAnnotationStartTime(Number(e.target.value) || 0)}
-              inputProps={{ min: 0, step: 0.1 }}
+              onChange={(e) => {
+                const raw = e.target.value
+                if (raw === '') {
+                  setAnnotationStartTime(0)
+                  return
+                }
+                const v = Number(raw)
+                setAnnotationStartTime(Number.isFinite(v) ? roundSeconds(v) : 0)
+              }}
+              inputProps={{ min: 0, step: 0.001 }}
               sx={{ mb: 2 }}
             />
             <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
@@ -1034,11 +1221,17 @@ function Annotations() {
                   size="small"
                   value={annotationDurationInput}
                   onChange={(e) => setAnnotationDurationInput(e.target.value)}
-                  inputProps={{ min: 0, step: 0.1 }}
+                  inputProps={{ min: 0, step: 0.001 }}
                   sx={{ mb: 0.5 }}
                 />
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                  End time: {formatTime(Math.max(0, annotationStartTime) + parseNonNegativeDurationInput(annotationDurationInput))}
+                  End time:{' '}
+                  {formatTime(
+                    roundSeconds(
+                      Math.max(0, annotationStartTime) +
+                        parseNonNegativeDurationInput(annotationDurationInput),
+                    ),
+                  )}
                 </Typography>
               </>
             )}
@@ -1106,9 +1299,16 @@ function Annotations() {
               onChange={(e) => setLabelName(e.target.value)}
               variant="outlined"
               size="small"
-              sx={{ mb: 2 }}
+              error={isDuplicateCreateLabel}
+              sx={{ mb: isDuplicateCreateLabel ? 1 : 2 }}
               inputProps={{ 'aria-label': 'Label name' }}
             />
+            {isDuplicateCreateLabel && (
+              <Alert severity="warning" variant="outlined" sx={{ mb: 2 }}>
+                You already have a label with this name (names are matched without regard to letter
+                case). Use a different name or edit the existing label.
+              </Alert>
+            )}
             <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
               Color
             </Typography>
@@ -1136,7 +1336,11 @@ function Annotations() {
             <Button onClick={closeAddLabel} sx={{ bgcolor: 'grey.200', color: 'grey.800' }}>
               Cancel
             </Button>
-            <Button variant="contained" onClick={handleCreateLabel} disabled={!labelName.trim()}>
+            <Button
+              variant="contained"
+              onClick={handleCreateLabel}
+              disabled={!labelName.trim() || isDuplicateCreateLabel}
+            >
               Create Label
             </Button>
           </DialogActions>
@@ -1243,6 +1447,23 @@ function Annotations() {
             </Button>
             <Button variant="contained" onClick={handleConfirmImport} color="warning">
               Upload Anyway
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Reset annotations dialog */}
+        <Dialog open={resetDialogOpen} onClose={() => setResetDialogOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle>Reset annotations</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary">
+              This removes every annotation and label for this video and clears saved data for this session.
+              Your video file stays loaded.
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
+            <Button onClick={() => setResetDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" color="error" onClick={handleConfirmResetAnnotations}>
+              Reset all
             </Button>
           </DialogActions>
         </Dialog>
@@ -1396,6 +1617,17 @@ function Annotations() {
                 <Button variant="outlined" size="small" onClick={handleExportCsv}>
                   Export CSV
                 </Button>
+                <Tooltip title="Remove all annotations and labels for this video">
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    color="error"
+                    onClick={() => setResetDialogOpen(true)}
+                    disabled={annotations.length === 0 && labels.length === 0}
+                  >
+                    Reset
+                  </Button>
+                </Tooltip>
               </Box>
             </Box>
             {annotations.length === 0 ? (
@@ -1411,15 +1643,36 @@ function Annotations() {
                   .map((a) => (
                     <Box
                       key={a.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleSeekToAnnotation(a)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          handleSeekToAnnotation(a)
+                        }
+                      }}
+                      aria-label={`Jump to ${formatTime(a.start)}: ${a.labelName}`}
                       sx={{
                         display: 'flex',
                         alignItems: 'center',
                         gap: 1,
                         py: 0.5,
-                          opacity: removingAnnotationId === a.id ? 0 : 1,
-                          transform:
-                            removingAnnotationId === a.id ? 'translateX(-6px)' : 'translateX(0)',
-                          transition: 'opacity 180ms ease, transform 180ms ease',
+                        px: 0.75,
+                        mx: -0.75,
+                        borderRadius: 1,
+                        cursor: 'pointer',
+                        opacity: removingAnnotationId === a.id ? 0 : 1,
+                        transform:
+                          removingAnnotationId === a.id ? 'translateX(-6px)' : 'translateX(0)',
+                        transition:
+                          'opacity 180ms ease, transform 180ms ease, background-color 120ms ease',
+                        '&:hover': { bgcolor: 'action.hover' },
+                        '&:focus-visible': {
+                          outline: '2px solid',
+                          outlineColor: 'primary.main',
+                          outlineOffset: 2,
+                        },
                       }}
                     >
                       <Box
@@ -1450,7 +1703,10 @@ function Annotations() {
                       <Tooltip title="Edit annotation">
                         <Button
                           size="small"
-                          onClick={() => openEditAnnotation(a)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openEditAnnotation(a)
+                          }}
                           sx={{ minWidth: 0, px: 1, fontSize: '0.85rem', lineHeight: 1.2 }}
                         >
                           ✎
@@ -1461,7 +1717,10 @@ function Annotations() {
                         <Button
                           size="small"
                           color="error"
-                          onClick={() => handleDeleteAnnotation(a.id)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeleteAnnotation(a.id)
+                          }}
                           sx={{ minWidth: 0, px: 1.25, fontSize: '0.9rem', lineHeight: 1.2 }}
                         >
                           ✕
