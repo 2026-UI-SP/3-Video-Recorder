@@ -40,12 +40,38 @@ function Header() {
 
   return (
     <AppBar position="static" sx={{ bgcolor: 'primary.main' }}>
-      <Toolbar sx={{ py: 1.25, px: { xs: 2, sm: 3 } }}>
-        <Typography variant="h6" component="span" sx={{ flexGrow: 1, fontWeight: 700, letterSpacing: '-0.02em' }}>
+      <Toolbar sx={{ py: { xs: 0.75, sm: 1.25 }, px: { xs: 1.5, sm: 3 }, gap: { xs: 0.5, sm: 0 } }}>
+        <Typography
+          variant="h6"
+          component="span"
+          sx={{
+            flexGrow: 1,
+            fontWeight: 700,
+            letterSpacing: '-0.02em',
+            display: { xs: 'none', sm: 'inline' },
+          }}
+        >
           Video Annotator
         </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <Box component="nav" sx={{ display: 'flex', gap: 1 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: { xs: 0.5, sm: 0.75 },
+            minWidth: 0,
+            flex: { xs: 1, sm: 'initial' },
+          }}
+        >
+          <Box
+            component="nav"
+            sx={{
+              display: 'flex',
+              gap: { xs: 0.5, sm: 1 },
+              minWidth: 0,
+              flex: { xs: 1, sm: 'initial' },
+              justifyContent: { xs: 'space-between', sm: 'flex-start' },
+            }}
+          >
             {links.map(({ to, label }) => (
               <Typography
                 key={to}
@@ -53,11 +79,15 @@ function Header() {
                 to={to}
                 color="inherit"
                 sx={{
-                  px: 2,
-                  py: 1,
+                  px: { xs: 0.75, sm: 2 },
+                  py: { xs: 0.75, sm: 1 },
                   borderRadius: 2,
                   textDecoration: 'none',
                   fontWeight: 500,
+                  fontSize: { xs: '0.85rem', sm: '0.95rem' },
+                  whiteSpace: 'nowrap',
+                  flex: { xs: 1, sm: 'initial' },
+                  textAlign: 'center',
                   opacity: location.pathname === to ? 1 : 0.9,
                   bgcolor: location.pathname === to ? 'rgba(255,255,255,0.12)' : 'transparent',
                   '&:hover': {
@@ -75,7 +105,7 @@ function Header() {
             onClick={toggleMode}
             aria-label={mode === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
             sx={{
-              ml: 1,
+              ml: { xs: 0, sm: 1 },
               color: 'white',
               '&:hover': { bgcolor: 'rgba(255,255,255,0.12)' },
               '& .MuiTouchRipple-root': { color: 'white' },

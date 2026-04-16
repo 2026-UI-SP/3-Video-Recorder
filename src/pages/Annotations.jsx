@@ -972,9 +972,22 @@ function Annotations() {
         </Alert>
       )}
 
-      <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', md: 'row' } }}>
+      <Box
+        sx={{
+          display: 'flex',
+          gap: { xs: 1.5, md: 2 },
+          flexDirection: { xs: 'column', md: 'row' },
+        }}
+      >
         {/* Left panel - Labels */}
-        <Paper sx={{ p: 2, width: { md: 260 }, flexShrink: 0 }}>
+        <Paper
+          sx={{
+            p: { xs: 1.5, md: 2 },
+            width: { xs: '100%', md: 280 },
+            flexShrink: 0,
+            order: { xs: 2, md: 1 },
+          }}
+        >
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               <Typography variant="subtitle1" fontWeight={600}>
@@ -1510,7 +1523,7 @@ function Annotations() {
         </Dialog>
 
         {/* Right panel - Video and annotations */}
-        <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Box sx={{ flex: 1, minWidth: 0, order: { xs: 1, md: 2 } }}>
           {/* Video player */}
           <Paper sx={{ overflow: 'hidden', mb: 2 }}>
             <Box sx={{ position: 'relative', bgcolor: 'grey.900' }}>
