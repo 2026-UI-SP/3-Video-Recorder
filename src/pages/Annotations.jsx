@@ -110,6 +110,7 @@ function Annotations() {
   const [annotationNotes, setAnnotationNotes] = useState('')
   const [annotationStartTime, setAnnotationStartTime] = useState(0)
   const [annotationDurationInput, setAnnotationDurationInput] = useState('0')
+  const [timelineSelection, setTimelineSelection] = useState(null)
   const [removingAnnotationId, setRemovingAnnotationId] = useState(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [shortcutsBannerVisible, setShortcutsBannerVisible] = useState(() => {
@@ -397,7 +398,9 @@ function Annotations() {
     setAnnotationType(annotation.type)
     // For range annotations, calculate duration from start and end times
     setAnnotationDurationInput(
-      annotation.type === 'range' ? String(annotation.end - annotation.start) : '0'
+      annotation.type === 'range'
+        ? String(roundSeconds(annotation.end - annotation.start))
+        : '0'
     )
     setAnnotationLabelId(annotation.labelId)
     setAnnotationNotes(annotation.notes || '')
@@ -409,6 +412,18 @@ function Annotations() {
     setEditingAnnotationId(null)
   }
 
+  const resetAnnotationEditor = () => {
+    setAnnotationStartTime(0)
+    setAnnotationDurationInput('0')
+    setAnnotationLabelId('')
+    setAnnotationNotes('')
+    setAnnotationType('point')
+    setEditingAnnotationId(null)
+    setAddAnnotationOpen(false)
+    setEditAnnotationOpen(false)
+    setTimelineSelection(null)
+  }
+
   // Seek to a specific time on the timeline
   const handleTimelineSeek = (e) => {
     if (!playerRef.current || duration <= 0) return
@@ -416,6 +431,44 @@ function Annotations() {
     const x = e.clientX - rect.left
     const pct = Math.max(0, Math.min(1, x / rect.width))
     playerRef.current.currentTime(pct * duration)
+  }
+
+  const getTimeFromTimelineEvent = (e) => {
+    if (duration <= 0) return 0
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const pct = Math.max(0, Math.min(1, x / rect.width))
+    return roundSeconds(pct * duration)
+  }
+
+  const handleTimelinePointerDown = (e) => {
+    if (!(isAnnotationEditorOpen && annotationType === 'range')) return
+    if (duration <= 0) return
+
+    const start = getTimeFromTimelineEvent(e)
+    setTimelineSelection({ anchor: start, current: start })
+    setAnnotationStartTime(start)
+    setAnnotationDurationInput('0')
+  }
+
+  const handleTimelinePointerMove = (e) => {
+    if (!timelineSelection || duration <= 0) return
+    const current = getTimeFromTimelineEvent(e)
+    setTimelineSelection((prev) => (prev ? { ...prev, current } : prev))
+  }
+
+  const finalizeTimelineRangeSelection = (selection) => {
+    if (!selection) return
+    const start = Math.min(selection.anchor, selection.current)
+    const end = Math.max(selection.anchor, selection.current)
+    setAnnotationStartTime(start)
+    setAnnotationDurationInput(String(roundSeconds(end - start)))
+    setTimelineSelection(null)
+  }
+
+  const handleTimelinePointerUp = () => {
+    if (!timelineSelection) return
+    finalizeTimelineRangeSelection(timelineSelection)
   }
 
   const handleSeekToAnnotation = (annotation) => {
@@ -480,6 +533,30 @@ function Annotations() {
     setToastMessage(`Updated annotation "${label.name}"`)
     setToastOpen(true)
   }
+
+  const isAnnotationEditorOpen = addAnnotationOpen || editAnnotationOpen
+  const isEditingAnnotation = editAnnotationOpen && editingAnnotationId != null
+  const activeTimelineSelection = timelineSelection
+    ? {
+        start: Math.min(timelineSelection.anchor, timelineSelection.current),
+        end: Math.max(timelineSelection.anchor, timelineSelection.current),
+      }
+    : null
+  const previewRangeAnnotation =
+    !activeTimelineSelection &&
+    isAnnotationEditorOpen &&
+    annotationType === 'range' &&
+    duration > 0
+      ? {
+          start: roundSeconds(Math.max(0, annotationStartTime)),
+          end: roundSeconds(
+            Math.max(0, annotationStartTime) +
+              parseNonNegativeDurationInput(annotationDurationInput),
+          ),
+        }
+      : null
+  const previewRangeColor =
+    labels.find((label) => label.id === annotationLabelId)?.color || 'primary.main'
 
   // Export annotations to CSV
   const handleExportCsv = () => {
@@ -927,6 +1004,193 @@ function Annotations() {
               + Add Label
             </Button>
           </Box>
+          {/* Add Annotation section - only when labels exist */}
+          {labels.length > 0 && (
+            <Paper
+              sx={{
+                p: 2,
+                mt: 2,
+                border: '1px solid',
+                borderColor: isAnnotationEditorOpen ? 'primary.main' : 'primary.light',
+                bgcolor: isAnnotationEditorOpen ? 'action.hover' : 'background.paper',
+                transition: 'border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease',
+                boxShadow: isAnnotationEditorOpen ? 2 : 0,
+              }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1.5 }}>
+                <Typography variant="subtitle1" fontWeight={600}>
+                  {isEditingAnnotation ? 'Editing Annotation' : 'Add Annotation'}
+                </Typography>
+                <Tooltip title="Add a timestamp or time range with a label and optional notes.">
+                  <Box
+                    component="span"
+                    sx={{
+                      color: 'text.secondary',
+                      fontSize: '0.9rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: 18,
+                      height: 18,
+                      borderRadius: '50%',
+                      border: '1px solid',
+                      borderColor: 'text.secondary',
+                    }}
+                  >
+                    i
+                  </Box>
+                </Tooltip>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: isAnnotationEditorOpen ? 2 : 1 }}>
+                Current time: {formatTime(currentTime)}
+              </Typography>
+              {!isAnnotationEditorOpen ? (
+                <Button variant="contained" fullWidth onClick={openAddAnnotation}>
+                  + Add Annotation at Current Time
+                </Button>
+              ) : (
+                <>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                    Start time (seconds)
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    type="number"
+                    size="small"
+                    value={annotationStartTime}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      if (raw === '') {
+                        setAnnotationStartTime(0)
+                        return
+                      }
+                      const v = Number(raw)
+                      setAnnotationStartTime(Number.isFinite(v) ? roundSeconds(v) : 0)
+                    }}
+                    inputProps={{ min: 0, step: 0.001 }}
+                    sx={{ mb: 1.5 }}
+                  />
+                  <Box sx={{ display: 'flex', gap: 1, mb: 2 }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      fullWidth
+                      onClick={() => {
+                        if (!playerRef.current) return
+                        const t = roundSeconds(playerRef.current.currentTime())
+                        setCurrentTime(t)
+                        setAnnotationStartTime(t)
+                      }}
+                    >
+                      Use Current Video Time
+                    </Button>
+                    <Button
+                      variant="text"
+                      size="small"
+                      onClick={() => playerRef.current?.paused() ? playerRef.current.play() : playerRef.current?.pause()}
+                    >
+                      {playerRef.current?.paused() ? 'Play' : 'Pause'}
+                    </Button>
+                  </Box>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                    Annotation Type
+                  </Typography>
+                  <ToggleButtonGroup
+                    value={annotationType}
+                    exclusive
+                    onChange={(_, v) => v != null && setAnnotationType(v)}
+                    size="small"
+                    sx={{ mb: 2 }}
+                    fullWidth
+                  >
+                    <ToggleButton value="point" sx={{ flex: 1 }}>Point in Time</ToggleButton>
+                    <ToggleButton value="range" sx={{ flex: 1 }}>Time Range</ToggleButton>
+                  </ToggleButtonGroup>
+                  {annotationType === 'range' && (
+                    <>
+                      <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                        Duration (seconds)
+                      </Typography>
+                      <TextField
+                        fullWidth
+                        type="number"
+                        size="small"
+                        value={annotationDurationInput}
+                        onChange={(e) => setAnnotationDurationInput(e.target.value)}
+                        inputProps={{ min: 0, step: 0.001 }}
+                        sx={{ mb: 0.5 }}
+                      />
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                        End time:{' '}
+                        {formatTime(
+                          roundSeconds(
+                            Math.max(0, annotationStartTime) +
+                              parseNonNegativeDurationInput(annotationDurationInput),
+                          ),
+                        )}
+                      </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                  Tip: drag across the timeline to choose the range visually.
+                </Typography>
+                    </>
+                  )}
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                    Select Label
+                  </Typography>
+                  <FormControl fullWidth size="small" sx={{ mb: 2 }}>
+                    <InputLabel id="annotation-editor-label-label">Choose a label...</InputLabel>
+                    <Select
+                      labelId="annotation-editor-label-label"
+                      value={annotationLabelId}
+                      label="Choose a label..."
+                      onChange={(e) => setAnnotationLabelId(e.target.value)}
+                    >
+                      {labels.map((label) => (
+                        <MenuItem key={label.id} value={label.id}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Box
+                              sx={{
+                                width: 10,
+                                height: 10,
+                                borderRadius: '50%',
+                                bgcolor: label.color,
+                              }}
+                            />
+                            {label.name}
+                          </Box>
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
+                    Notes (optional)
+                  </Typography>
+                  <TextField
+                    fullWidth
+                    multiline
+                    rows={3}
+                    placeholder="Add any additional notes..."
+                    value={annotationNotes}
+                    onChange={(e) => setAnnotationNotes(e.target.value)}
+                    variant="outlined"
+                    size="small"
+                    sx={{ mb: 2 }}
+                  />
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+                    <Button onClick={resetAnnotationEditor}>Cancel</Button>
+                    <Button
+                      variant="contained"
+                      onClick={isEditingAnnotation ? handleUpdateAnnotation : handleAddAnnotation}
+                      disabled={!annotationLabelId}
+                    >
+                      {isEditingAnnotation ? 'Update' : 'Add'}
+                    </Button>
+                  </Box>
+                </>
+              )}
+            </Paper>
+          )}
+
           <Box sx={{ textAlign: 'center', py: 3 }}>
             {labels.length === 0 ? (
               <>
@@ -947,16 +1211,17 @@ function Annotations() {
                       display: 'flex',
                       alignItems: 'center',
                       gap: 1,
-                      justifyContent: 'center',
+                      justifyContent: 'space-between',
                       position: 'relative',
                       padding: '8px 12px',
                       borderRadius: 1,
+                      minWidth: 0,
                       transition: 'background-color 200ms ease',
                       '&:hover': {
                         bgcolor: 'action.hover',
                       },
                       '&:hover .label-actions': {
-                        opacity: 1, // Show action buttons on hover
+                        opacity: 1,
                         pointerEvents: 'auto',
                       },
                     }}
@@ -970,16 +1235,28 @@ function Annotations() {
                         flexShrink: 0,
                       }}
                     />
-                    <Typography variant="body2" sx={{ flex: 1 }}>
-                      {label.name}
-                    </Typography>
-                    {/* Edit and Delete buttons appear on label hover */}
+                    <Tooltip title={label.name} disableHoverListener={label.name.length <= 24}>
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          textAlign: 'left',
+                        }}
+                      >
+                        {label.name}
+                      </Typography>
+                    </Tooltip>
                     <Box
                       className="label-actions"
                       sx={{
                         display: 'flex',
                         gap: 0.5,
-                        opacity: 0, // Hidden by default, revealed on hover
+                        flexShrink: 0,
+                        opacity: 0,
                         pointerEvents: 'none',
                         transition: 'opacity 200ms ease',
                       }}
@@ -1019,271 +1296,7 @@ function Annotations() {
               </Box>
             )}
           </Box>
-
-          {/* Add Annotation section - only when labels exist */}
-          {labels.length > 0 && (
-            <Paper sx={{ p: 2, mt: 2, border: '1px solid', borderColor: 'primary.light' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1.5 }}>
-                <Typography variant="subtitle1" fontWeight={600}>
-                  Add Annotation
-                </Typography>
-              <Tooltip title="Add a timestamp or time range with a label and optional notes.">
-                <Box
-                  component="span"
-                  sx={{
-                    color: 'text.secondary',
-                    fontSize: '0.9rem',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: 18,
-                    height: 18,
-                    borderRadius: '50%',
-                    border: '1px solid',
-                    borderColor: 'text.secondary',
-                  }}
-                >
-                  i
-                </Box>
-                </Tooltip>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Current time: {formatTime(currentTime)}
-              </Typography>
-              <Button variant="contained" fullWidth onClick={openAddAnnotation}>
-                + Add Annotation at Current Time
-              </Button>
-            </Paper>
-          )}
         </Paper>
-
-        {/* Add Annotation dialog */}
-        <Dialog open={addAnnotationOpen} onClose={closeAddAnnotation} maxWidth="xs" fullWidth>
-          <DialogTitle>Add Annotation</DialogTitle>
-          <DialogContent>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Current time: {formatTime(currentTime)}
-            </Typography>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Start time (seconds)
-            </Typography>
-            <TextField
-              fullWidth
-              type="number"
-              size="small"
-              value={annotationStartTime}
-              onChange={(e) => {
-                const raw = e.target.value
-                if (raw === '') {
-                  setAnnotationStartTime(0)
-                  return
-                }
-                const v = Number(raw)
-                setAnnotationStartTime(Number.isFinite(v) ? roundSeconds(v) : 0)
-              }}
-              inputProps={{ min: 0, step: 0.001 }}
-              sx={{ mb: 2 }}
-            />
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Annotation Type
-            </Typography>
-            <ToggleButtonGroup
-              value={annotationType}
-              exclusive
-              onChange={(_, v) => v != null && setAnnotationType(v)}
-              size="small"
-              sx={{ mb: 2 }}
-            >
-              <ToggleButton value="point">Point in Time</ToggleButton>
-              <ToggleButton value="range">Time Range</ToggleButton>
-            </ToggleButtonGroup>
-            {annotationType === 'range' && (
-              <>
-                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                  Duration (seconds)
-                </Typography>
-                <TextField
-                  fullWidth
-                  type="number"
-                  size="small"
-                  value={annotationDurationInput}
-                  onChange={(e) => setAnnotationDurationInput(e.target.value)}
-                  inputProps={{ min: 0, step: 0.001 }}
-                  sx={{ mb: 0.5 }}
-                />
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                  End time:{' '}
-                  {formatTime(
-                    roundSeconds(
-                      Math.max(0, annotationStartTime) +
-                        parseNonNegativeDurationInput(annotationDurationInput),
-                    ),
-                  )}
-                </Typography>
-              </>
-            )}
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Select Label
-            </Typography>
-            <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-              <InputLabel id="annotation-label-label">Choose a label...</InputLabel>
-              <Select
-                labelId="annotation-label-label"
-                value={annotationLabelId}
-                label="Choose a label..."
-                onChange={(e) => setAnnotationLabelId(e.target.value)}
-              >
-                {labels.map((label) => (
-                  <MenuItem key={label.id} value={label.id}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box
-                        sx={{
-                          width: 10,
-                          height: 10,
-                          borderRadius: '50%',
-                          bgcolor: label.color,
-                        }}
-                      />
-                      {label.name}
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Notes (optional)
-            </Typography>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              placeholder="Add any additional notes..."
-              value={annotationNotes}
-              onChange={(e) => setAnnotationNotes(e.target.value)}
-              variant="outlined"
-              size="small"
-            />
-          </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
-            <Button onClick={closeAddAnnotation}>Cancel</Button>
-            <Button variant="contained" onClick={handleAddAnnotation} disabled={!annotationLabelId}>
-              Add
-            </Button>
-          </DialogActions>
-        </Dialog>
-
-        {/* Edit Annotation dialog - allows full modification of annotation properties */}
-        {/* User can change: time, annotation type (point/range), label, and notes */}
-        <Dialog open={editAnnotationOpen} onClose={closeEditAnnotation} maxWidth="xs" fullWidth>
-          <DialogTitle>Edit Annotation</DialogTitle>
-          <DialogContent>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mt: 1, mb: 0.5 }}>
-              Start time (seconds)
-            </Typography>
-            <TextField
-              fullWidth
-              type="number"
-              size="small"
-              value={annotationStartTime}
-              onChange={(e) => {
-                const raw = e.target.value
-                if (raw === '') {
-                  setAnnotationStartTime(0)
-                  return
-                }
-                const v = Number(raw)
-                setAnnotationStartTime(Number.isFinite(v) ? roundSeconds(v) : 0)
-              }}
-              inputProps={{ min: 0, step: 0.001 }}
-              sx={{ mb: 2 }}
-            />
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Annotation Type
-            </Typography>
-            <ToggleButtonGroup
-              value={annotationType}
-              exclusive
-              onChange={(_, v) => v != null && setAnnotationType(v)}
-              size="small"
-              sx={{ mb: 2 }}
-            >
-              <ToggleButton value="point">Point in Time</ToggleButton>
-              <ToggleButton value="range">Time Range</ToggleButton>
-            </ToggleButtonGroup>
-            {annotationType === 'range' && (
-              <>
-                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-                  Duration (seconds)
-                </Typography>
-                <TextField
-                  fullWidth
-                  type="number"
-                  size="small"
-                  value={annotationDurationInput}
-                  onChange={(e) => setAnnotationDurationInput(e.target.value)}
-                  inputProps={{ min: 0, step: 0.001 }}
-                  sx={{ mb: 0.5 }}
-                />
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                  End time:{' '}
-                  {formatTime(
-                    roundSeconds(
-                      Math.max(0, annotationStartTime) +
-                        parseNonNegativeDurationInput(annotationDurationInput),
-                    ),
-                  )}
-                </Typography>
-              </>
-            )}
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Select Label
-            </Typography>
-            <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-              <InputLabel id="edit-annotation-label-label">Choose a label...</InputLabel>
-              <Select
-                labelId="edit-annotation-label-label"
-                value={annotationLabelId}
-                label="Choose a label..."
-                onChange={(e) => setAnnotationLabelId(e.target.value)}
-              >
-                {labels.map((label) => (
-                  <MenuItem key={label.id} value={label.id}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box
-                        sx={{
-                          width: 10,
-                          height: 10,
-                          borderRadius: '50%',
-                          bgcolor: label.color,
-                        }}
-                      />
-                      {label.name}
-                    </Box>
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 0.5 }}>
-              Notes (optional)
-            </Typography>
-            <TextField
-              fullWidth
-              multiline
-              rows={3}
-              placeholder="Add any additional notes..."
-              value={annotationNotes}
-              onChange={(e) => setAnnotationNotes(e.target.value)}
-              variant="outlined"
-              size="small"
-            />
-          </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2, pt: 0 }}>
-            <Button onClick={closeEditAnnotation}>Cancel</Button>
-            <Button variant="contained" onClick={handleUpdateAnnotation} disabled={!annotationLabelId}>
-              Update
-            </Button>
-          </DialogActions>
-        </Dialog>
 
         {/* Add Label dialog */}
         <Dialog open={addLabelOpen} onClose={closeAddLabel} maxWidth="xs" fullWidth>
@@ -1542,16 +1555,44 @@ function Annotations() {
                 Timeline
               </Typography>
               <Box
-                onClick={handleTimelineSeek}
+                onClick={(e) => {
+                  if (isAnnotationEditorOpen && annotationType === 'range') return
+                  handleTimelineSeek(e)
+                }}
+                onMouseDown={handleTimelinePointerDown}
+                onMouseMove={handleTimelinePointerMove}
+                onMouseUp={handleTimelinePointerUp}
+                onMouseLeave={handleTimelinePointerUp}
                 sx={{
                   height: 32,
                   borderRadius: 1,
                   bgcolor: 'grey.200',
                   position: 'relative',
-                  cursor: 'pointer',
+                  cursor:
+                    isAnnotationEditorOpen && annotationType === 'range'
+                      ? 'crosshair'
+                      : 'pointer',
                   overflow: 'hidden',
                 }}
               >
+                {(activeTimelineSelection || previewRangeAnnotation) && duration > 0 && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      left: `${(((activeTimelineSelection || previewRangeAnnotation).start) / duration) * 100}%`,
+                      top: 0,
+                      bottom: 0,
+                      width: `${Math.max(((((activeTimelineSelection || previewRangeAnnotation).end - (activeTimelineSelection || previewRangeAnnotation).start) / duration) * 100), 0.5)}%`,
+                      bgcolor: previewRangeColor,
+                      opacity: activeTimelineSelection ? 0.35 : 0.22,
+                      borderRadius: 0.5,
+                      pointerEvents: 'none',
+                      zIndex: 1,
+                      border: '1px dashed',
+                      borderColor: activeTimelineSelection ? 'primary.dark' : previewRangeColor,
+                    }}
+                  />
+                )}
                 {/* Annotation segments (time ranges) and points */}
                 {duration > 0 &&
                   annotations.map((a) => {
@@ -1694,9 +1735,21 @@ function Annotations() {
                           </Typography>
                         </Typography>
                         {a.notes && (
-                          <Typography variant="caption" color="text.secondary">
-                            {a.notes}
-                          </Typography>
+                          <Tooltip title={a.notes} disableHoverListener={a.notes.length <= 40}>
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{
+                                display: 'block',
+                                minWidth: 0,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {a.notes}
+                            </Typography>
+                          </Tooltip>
                         )}
                       </Box>
                       {/* Edit annotation button - allows user to modify time, label, type, and notes */}
